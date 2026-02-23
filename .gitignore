@@ -9,6 +9,5 @@ build/
 test_logdir/
 tests/
 DEFERRED_FIXES.md
-
 .claude/
 .planning/
