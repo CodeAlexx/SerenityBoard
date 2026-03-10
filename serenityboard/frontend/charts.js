@@ -1545,6 +1545,162 @@ function createPRCurveChart(containerId, allResults, selectedStep) {
 }
 
 // ── Audio Gallery ──────────────────────────────────────────────────
+function formatAudioDuration(durationMs) {
+    if (!durationMs && durationMs !== 0) return '';
+    return (durationMs / 1000).toFixed(1) + 's';
+}
+
+function formatAudioDb(value) {
+    if (value === null || value === undefined || !isFinite(value)) return '';
+    return value.toFixed(1) + ' dBFS';
+}
+
+function pauseOtherAudioPlayers(activeAudio) {
+    document.querySelectorAll('.audio-card audio').forEach(function(player) {
+        if (player !== activeAudio) player.pause();
+    });
+}
+
+function createAudioBlobUrl(run, blobKey) {
+    return '/api/runs/' + encodeURIComponent(run) + '/blob/' + encodeURIComponent(blobKey);
+}
+
+function drawAudioWaveform(canvas, peaks, progress) {
+    if (!canvas || !peaks || !peaks.length) return;
+
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    var width = canvas.width;
+    var height = canvas.height;
+    var mid = height / 2;
+    var amp = (height * 0.5) - 6;
+    var styles = getComputedStyle(document.documentElement);
+    var bg = styles.getPropertyValue('--bg-tertiary').trim() || '#111827';
+    var border = styles.getPropertyValue('--border-color').trim() || '#334155';
+    var muted = styles.getPropertyValue('--text-secondary').trim() || '#94a3b8';
+    var accent = styles.getPropertyValue('--accent-color').trim() || '#4f8cff';
+    var progressX = width * Math.max(0, Math.min(1, progress || 0));
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = border;
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(width, mid);
+    ctx.stroke();
+
+    function drawPeaks(color, maxX) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (var i = 0; i < peaks.length; i++) {
+            var pair = peaks[i];
+            if (!pair || pair.length < 2) continue;
+            var x = peaks.length === 1 ? width / 2 : (i / (peaks.length - 1)) * width;
+            if (maxX !== null && x > maxX) continue;
+            var yMin = mid - (pair[1] * amp);
+            var yMax = mid - (pair[0] * amp);
+            ctx.moveTo(x, yMin);
+            ctx.lineTo(x, yMax);
+        }
+        ctx.stroke();
+    }
+
+    drawPeaks(muted, null);
+    if (progressX > 0) drawPeaks(accent, progressX);
+}
+
+function drawAudioSpectrogram(canvas, columns, progress) {
+    if (!canvas || !columns || !columns.length) return;
+
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    var width = canvas.width;
+    var height = canvas.height;
+    var styles = getComputedStyle(document.documentElement);
+    var bg = styles.getPropertyValue('--bg-tertiary').trim() || '#111827';
+    var border = styles.getPropertyValue('--border-color').trim() || '#334155';
+    var progressColor = styles.getPropertyValue('--accent-color').trim() || '#4f8cff';
+    var progressX = width * Math.max(0, Math.min(1, progress || 0));
+    var cols = columns.length;
+    var rows = (columns[0] || []).length;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, width, height);
+
+    if (!rows) return;
+
+    var cellWidth = width / cols;
+    var cellHeight = height / rows;
+    for (var x = 0; x < cols; x++) {
+        var column = columns[x] || [];
+        for (var y = 0; y < rows; y++) {
+            var intensity = Math.max(0, Math.min(1, column[y] || 0));
+            var hue = 220 - (intensity * 190);
+            var lightness = 10 + (intensity * 55);
+            ctx.fillStyle = 'hsl(' + hue.toFixed(0) + ' 88% ' + lightness.toFixed(0) + '%)';
+            ctx.fillRect(
+                x * cellWidth,
+                height - ((y + 1) * cellHeight),
+                Math.ceil(cellWidth + 0.5),
+                Math.ceil(cellHeight + 0.5)
+            );
+        }
+    }
+
+    ctx.strokeStyle = border;
+    ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
+    if (progressX > 0) {
+        ctx.strokeStyle = progressColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(progressX, 0);
+        ctx.lineTo(progressX, height);
+        ctx.stroke();
+    }
+}
+
+function attachAudioTimelineSeek(canvas, audio) {
+    if (!canvas || !audio) return;
+    canvas.addEventListener('click', function(evt) {
+        if (!audio.duration || !isFinite(audio.duration)) return;
+        var rect = canvas.getBoundingClientRect();
+        if (!rect.width) return;
+        var ratio = (evt.clientX - rect.left) / rect.width;
+        audio.currentTime = Math.max(0, Math.min(1, ratio)) * audio.duration;
+    });
+}
+
+function attachAudioPreview(audio, renderers) {
+    if (!audio || !renderers || !renderers.length) return;
+
+    function render(progressOverride) {
+        var progress = progressOverride;
+        if (progress === undefined) {
+            progress = audio.duration ? (audio.currentTime / audio.duration) : 0;
+        }
+        renderers.forEach(function(renderer) { renderer(progress); });
+    }
+
+    render(0);
+
+    audio.addEventListener('loadedmetadata', function() { render(); });
+    audio.addEventListener('timeupdate', function() { render(); });
+    audio.addEventListener('seeked', function() { render(); });
+    audio.addEventListener('ended', function() {
+        render(0);
+    });
+    audio.addEventListener('play', function() {
+        pauseOtherAudioPlayers(audio);
+        render();
+    });
+    audio.addEventListener('pause', function() { render(); });
+}
+
 // (Pure HTML - no chart library needed)
 function createAudioGallery(containerId, allResults) {
     var container = document.getElementById(containerId);
@@ -1561,6 +1717,13 @@ function createAudioGallery(containerId, allResults) {
         var items = allResults[run];
         if (!items || !items.length) return;
 
+        var itemsByTag = {};
+        items.forEach(function(item) {
+            var tag = item.tag || 'audio';
+            if (!itemsByTag[tag]) itemsByTag[tag] = [];
+            itemsByTag[tag].push(item);
+        });
+
         var section = document.createElement('div');
         section.className = 'audio-run-section';
 
@@ -1569,39 +1732,130 @@ function createAudioGallery(containerId, allResults) {
         heading.textContent = run;
         section.appendChild(heading);
 
-        var grid = document.createElement('div');
-        grid.className = 'audio-grid';
+        Object.keys(itemsByTag).sort().forEach(function(tag) {
+            var tagSection = document.createElement('div');
+            tagSection.className = 'audio-tag-section';
 
-        items.forEach(function(item) {
-            var card = document.createElement('div');
-            card.className = 'audio-card';
+            var tagHeading = document.createElement('div');
+            tagHeading.className = 'audio-tag-heading';
+            tagHeading.textContent = tag;
+            tagSection.appendChild(tagHeading);
 
-            var info = document.createElement('div');
-            info.className = 'audio-info';
-            info.innerHTML = '<span class="audio-step">Step ' + item.step + '</span>' +
-                '<span class="audio-meta">' + item.sample_rate + ' Hz' +
-                (item.duration_ms ? ' \u00b7 ' + (item.duration_ms / 1000).toFixed(1) + 's' : '') +
-                (item.num_channels > 1 ? ' \u00b7 ' + item.num_channels + 'ch' : '') +
-                '</span>';
-            card.appendChild(info);
+            var grid = document.createElement('div');
+            grid.className = 'audio-grid';
 
-            var audio = document.createElement('audio');
-            audio.controls = true;
-            audio.preload = 'none';
-            audio.src = '/api/runs/' + encodeURIComponent(run) + '/blob/' + encodeURIComponent(item.blob_key);
-            card.appendChild(audio);
+            itemsByTag[tag].sort(function(a, b) { return b.step - a.step; }).forEach(function(item) {
+                var card = document.createElement('div');
+                card.className = 'audio-card';
 
-            if (item.label) {
-                var label = document.createElement('div');
-                label.className = 'audio-label';
-                label.textContent = item.label;
-                card.appendChild(label);
-            }
+                var info = document.createElement('div');
+                info.className = 'audio-info';
+                info.innerHTML = '<span class="audio-step">Step ' + item.step + '</span>' +
+                    '<span class="audio-meta">' + item.sample_rate + ' Hz' +
+                    (item.duration_ms ? ' \u00b7 ' + formatAudioDuration(item.duration_ms) : '') +
+                    (item.num_channels > 1 ? ' \u00b7 ' + item.num_channels + 'ch' : '') +
+                    '</span>';
+                card.appendChild(info);
 
-            grid.appendChild(card);
+                var stats = document.createElement('div');
+                stats.className = 'audio-stats';
+                stats.innerHTML =
+                    '<span class="audio-stat">Peak ' + formatAudioDb(item.peak_db) + '</span>' +
+                    '<span class="audio-stat">RMS ' + formatAudioDb(item.rms_db) + '</span>';
+                card.appendChild(stats);
+
+                var blobUrl = createAudioBlobUrl(run, item.blob_key);
+                var waveform = document.createElement('canvas');
+                waveform.className = 'audio-waveform';
+                waveform.width = 640;
+                waveform.height = 88;
+                if (item.waveform && item.waveform.length) {
+                    drawAudioWaveform(waveform, item.waveform, 0);
+                } else {
+                    waveform.classList.add('is-empty');
+                    var waveEmpty = document.createElement('div');
+                    waveEmpty.className = 'audio-waveform-empty';
+                    waveEmpty.textContent = 'Waveform preview unavailable';
+                    card.appendChild(waveform);
+                    card.appendChild(waveEmpty);
+                }
+
+                if (item.waveform && item.waveform.length) {
+                    card.appendChild(waveform);
+                }
+
+                var spectrogram = document.createElement('canvas');
+                spectrogram.className = 'audio-spectrogram';
+                spectrogram.width = 640;
+                spectrogram.height = 120;
+                if (item.spectrogram && item.spectrogram.length) {
+                    drawAudioSpectrogram(spectrogram, item.spectrogram, 0);
+                    card.appendChild(spectrogram);
+                } else {
+                    spectrogram.classList.add('is-empty');
+                    var specEmpty = document.createElement('div');
+                    specEmpty.className = 'audio-waveform-empty';
+                    specEmpty.textContent = 'Spectrogram preview unavailable';
+                    card.appendChild(spectrogram);
+                    card.appendChild(specEmpty);
+                }
+
+                var controls = document.createElement('div');
+                controls.className = 'audio-controls-row';
+
+                var audio = document.createElement('audio');
+                audio.className = 'audio-player';
+                audio.controls = true;
+                audio.preload = 'none';
+                audio.src = blobUrl;
+                controls.appendChild(audio);
+
+                var actions = document.createElement('div');
+                actions.className = 'audio-actions';
+
+                var download = document.createElement('a');
+                download.className = 'audio-action-link';
+                download.href = blobUrl;
+                download.download = item.blob_key;
+                download.textContent = 'Download';
+                actions.appendChild(download);
+
+                var open = document.createElement('a');
+                open.className = 'audio-action-link';
+                open.href = blobUrl;
+                open.target = '_blank';
+                open.rel = 'noopener noreferrer';
+                open.textContent = 'Open';
+                actions.appendChild(open);
+
+                controls.appendChild(actions);
+                card.appendChild(controls);
+
+                var renderers = [];
+                if (item.waveform && item.waveform.length) {
+                    renderers.push(function(progress) { drawAudioWaveform(waveform, item.waveform, progress); });
+                    attachAudioTimelineSeek(waveform, audio);
+                }
+                if (item.spectrogram && item.spectrogram.length) {
+                    renderers.push(function(progress) { drawAudioSpectrogram(spectrogram, item.spectrogram, progress); });
+                    attachAudioTimelineSeek(spectrogram, audio);
+                }
+                attachAudioPreview(audio, renderers);
+
+                if (item.label) {
+                    var label = document.createElement('div');
+                    label.className = 'audio-label';
+                    label.textContent = item.label;
+                    card.appendChild(label);
+                }
+
+                grid.appendChild(card);
+            });
+
+            tagSection.appendChild(grid);
+            section.appendChild(tagSection);
         });
 
-        section.appendChild(grid);
         container.appendChild(section);
     });
 }

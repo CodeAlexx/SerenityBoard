@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sqlite3
+import wave
 
 import numpy as np
 
@@ -27,6 +28,7 @@ class RunDataProvider:
         self._conn.execute("PRAGMA query_only = ON")
         self._last_seen: dict[str, int] = {}
         self._known_session_id: str | None = None
+        self._audio_analysis_cache: dict[tuple[str, int, int, int], dict[str, object] | None] = {}
 
     # ── session tracking ─────────────────────────────────────────────
 
@@ -450,6 +452,142 @@ class RunDataProvider:
 
     # ── audio reads ─────────────────────────────────────────────────
 
+    def _audio_blob_path(self, blob_key: str) -> str:
+        return os.path.join(self.run_dir, "blobs", blob_key)
+
+    def _load_audio_samples(self, blob_key: str) -> np.ndarray | None:
+        blob_path = self._audio_blob_path(blob_key)
+        if not os.path.isfile(blob_path):
+            return None
+
+        try:
+            with wave.open(blob_path, "rb") as wf:
+                n_frames = wf.getnframes()
+                n_channels = max(1, wf.getnchannels())
+                sample_width = wf.getsampwidth()
+                raw = wf.readframes(n_frames)
+        except (wave.Error, OSError):
+            logger.debug("Failed to read audio preview from %s", blob_path, exc_info=True)
+            return None
+
+        if sample_width == 1:
+            samples = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
+            samples = (samples - 128.0) / 128.0
+        elif sample_width == 2:
+            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767.0
+        elif sample_width == 4:
+            samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483647.0
+        else:
+            return None
+
+        if samples.size == 0:
+            return None
+
+        if n_channels > 1:
+            usable = (samples.size // n_channels) * n_channels
+            samples = samples[:usable].reshape(-1, n_channels).mean(axis=1)
+        return samples
+
+    def _build_waveform_preview(self, samples: np.ndarray, bins: int) -> list[list[float]] | None:
+        block_size = max(1, int(np.ceil(samples.size / max(16, bins))))
+        peaks: list[list[float]] = []
+        for start in range(0, samples.size, block_size):
+            chunk = samples[start:start + block_size]
+            if chunk.size == 0:
+                continue
+            peaks.append([float(np.min(chunk)), float(np.max(chunk))])
+        return peaks or None
+
+    def _build_spectrogram_preview(
+        self,
+        samples: np.ndarray,
+        *,
+        frames: int,
+        bins: int,
+    ) -> list[list[float]] | None:
+        if samples.size < 32:
+            return None
+
+        window_size = min(1024, samples.size)
+        if window_size < 32:
+            return None
+
+        if samples.size <= window_size:
+            start_positions = np.array([0], dtype=np.int32)
+        else:
+            frame_count = max(8, min(frames, samples.size - window_size + 1))
+            start_positions = np.linspace(
+                0,
+                samples.size - window_size,
+                num=frame_count,
+                dtype=np.int32,
+            )
+
+        window = np.hanning(window_size).astype(np.float32)
+        columns: list[list[float]] = []
+        for start in start_positions:
+            frame = samples[int(start):int(start) + window_size]
+            if frame.shape[0] < window_size:
+                frame = np.pad(frame, (0, window_size - frame.shape[0]))
+            spectrum = np.abs(np.fft.rfft(frame * window))
+            if spectrum.size <= 1:
+                continue
+            spectrum = np.log1p(spectrum[1:])
+            band_size = max(1, int(np.ceil(spectrum.size / max(8, bins))))
+            bands = [
+                float(np.mean(spectrum[idx:idx + band_size]))
+                for idx in range(0, spectrum.size, band_size)
+                if spectrum[idx:idx + band_size].size
+            ]
+            if len(bands) < bins:
+                bands.extend([0.0] * (bins - len(bands)))
+            columns.append(bands[:bins])
+
+        if not columns:
+            return None
+
+        matrix = np.asarray(columns, dtype=np.float32)
+        max_value = float(np.max(matrix))
+        if max_value > 0.0:
+            matrix /= max_value
+        return matrix.tolist()
+
+    @staticmethod
+    def _amplitude_to_db(value: float) -> float:
+        return float(20.0 * np.log10(max(abs(value), 1.0e-6)))
+
+    def _analyze_audio_blob(
+        self,
+        blob_key: str,
+        *,
+        waveform_bins: int = 160,
+        spectrogram_frames: int = 96,
+        spectrogram_bins: int = 48,
+    ) -> dict[str, object] | None:
+        cache_key = (blob_key, waveform_bins, spectrogram_frames, spectrogram_bins)
+        if cache_key in self._audio_analysis_cache:
+            return self._audio_analysis_cache[cache_key]
+
+        samples = self._load_audio_samples(blob_key)
+        if samples is None or samples.size == 0:
+            self._audio_analysis_cache[cache_key] = None
+            return None
+
+        peak = float(np.max(np.abs(samples)))
+        rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float32))))
+        analysis: dict[str, object] = {
+            "waveform": self._build_waveform_preview(samples, waveform_bins),
+            "spectrogram": self._build_spectrogram_preview(
+                samples,
+                frames=spectrogram_frames,
+                bins=spectrogram_bins,
+            ),
+            "peak_db": self._amplitude_to_db(peak),
+            "rms_db": self._amplitude_to_db(rms),
+        }
+        self._audio_analysis_cache[cache_key] = analysis
+        return analysis
+
     def read_audio(self, tag: str, downsample: int = 50) -> list[dict]:
         """Return audio metadata for the given tag."""
         try:
@@ -466,6 +604,7 @@ class RunDataProvider:
             rows = rows[::step]
         return [
             {
+                "tag": tag,
                 "step": r[0],
                 "wall_time": r[1],
                 "blob_key": r[2],
@@ -474,8 +613,13 @@ class RunDataProvider:
                 "duration_ms": r[5],
                 "mime_type": r[6],
                 "label": r[7],
+                "waveform": (analysis or {}).get("waveform"),
+                "spectrogram": (analysis or {}).get("spectrogram"),
+                "peak_db": (analysis or {}).get("peak_db"),
+                "rms_db": (analysis or {}).get("rms_db"),
             }
             for r in rows
+            for analysis in [self._analyze_audio_blob(r[2])]
         ]
 
     # ── mesh reads ────────────────────────────────────────────────────

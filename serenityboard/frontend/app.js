@@ -199,7 +199,12 @@
 
     function fetchAudio(runName, tag) {
         var url = '/api/runs/' + encodeURIComponent(runName) + '/audio?tag=' + encodeURIComponent(tag) + '&downsample=50';
-        return fetchJsonNoCache(url);
+        return fetchJsonNoCache(url).then(function(items) {
+            return (items || []).map(function(item) {
+                if (!item.tag) item.tag = tag;
+                return item;
+            });
+        });
     }
 
     function fetchCustomScalarsLayout(runName) {
