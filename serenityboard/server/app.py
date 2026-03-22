@@ -22,6 +22,7 @@ from serenityboard.server.routes import (
     hparams_router,
     histograms_router,
     images_router,
+    lora_router,
     meshes_router,
     metrics_router,
     notes_router,
@@ -165,6 +166,7 @@ def create_app(logdir: str) -> FastAPI:
     app.include_router(meshes_router)
     app.include_router(embeddings_router)
     app.include_router(notes_router)
+    app.include_router(lora_router)
     app.include_router(tables_router)
     app.include_router(registry_router)
     app.include_router(sweeps_router)

@@ -1455,3 +1455,151 @@ html, body {
 .run-notes-textarea:focus {
     border-color: var(--accent-dim);
 }
+
+/* ── LoRA Compare tab ──────────────────────────────────────── */
+
+.lora-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 12px;
+    background: var(--bg-card);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    align-items: flex-end;
+}
+
+.lora-file-inputs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    flex: 1;
+}
+
+.lora-file-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.lora-file-group label {
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.lora-path-input {
+    background: var(--bg-main);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    color: var(--text-primary);
+    padding: 4px 8px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    width: 280px;
+}
+
+.lora-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.toolbar-btn-primary {
+    background: var(--accent-dim) !important;
+    color: var(--text-primary) !important;
+}
+
+.lora-summary-bar {
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.lora-diag-title {
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.lora-diag-item {
+    padding: 4px 0;
+    color: #f0ad4e;
+    font-size: 12px;
+}
+
+#lora-diagnostics {
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border-radius: 6px;
+    margin-bottom: 12px;
+}
+
+.lora-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-family: var(--font-mono);
+}
+
+.lora-table th {
+    background: var(--bg-card);
+    color: var(--text-muted);
+    padding: 6px 10px;
+    text-align: right;
+    border-bottom: 1px solid var(--border-subtle);
+    font-weight: 500;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.lora-table th:first-child {
+    text-align: left;
+}
+
+.lora-table td {
+    padding: 4px 10px;
+    text-align: right;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.lora-table td:first-child {
+    text-align: left;
+    color: var(--text-primary);
+}
+
+.lora-table tbody tr:hover {
+    background: var(--bg-hover);
+}
+
+.lora-layer-name {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.diff-up {
+    color: #e74c3c !important;
+}
+
+.diff-down {
+    color: #2ecc71 !important;
+}
+
+#lora-table-container {
+    max-height: calc(100vh - 380px);
+    overflow-y: auto;
+}
+
+#lora-charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 12px;
+}

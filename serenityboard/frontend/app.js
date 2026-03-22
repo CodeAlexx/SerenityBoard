@@ -85,6 +85,7 @@
     var prCurvesContainerEl = document.getElementById('pr-curves-container');
     var audioContainerEl = document.getElementById('audio-container');
     var panelProjectorEl = document.getElementById('panel-projector');
+    var panelLoraEl = document.getElementById('panel-lora');
     var exportScalarsEl = document.getElementById('export-scalars');
     var runNotesSectionEl = document.getElementById('run-notes-section');
     var runNotesTextareaEl = document.getElementById('run-notes-textarea');
@@ -763,6 +764,7 @@
             [panelPRCurvesEl, 'pr-curves'],
             [panelAudioEl, 'audio'],
             [panelProjectorEl, 'projector'],
+            [panelLoraEl, 'lora'],
         ];
         panels.forEach(function(pair) {
             if (pair[0]) {
@@ -824,6 +826,10 @@
             var projInst = getChartInstance('projector-plot');
             if (projInst) {
                 setTimeout(function() { projInst.resize(); }, 50);
+            }
+        } else if (tabName === 'lora') {
+            if (typeof window.resizeLoraCharts === 'function') {
+                setTimeout(window.resizeLoraCharts, 50);
             }
         }
 
@@ -1982,7 +1988,7 @@
 
         // Restore active tab
         if (params.tab) {
-            var validTabs = ['scalars', 'histograms', 'hparams', 'traces', 'eval', 'artifacts', 'audio', 'pr-curves', 'projector'];
+            var validTabs = ['scalars', 'histograms', 'hparams', 'traces', 'eval', 'artifacts', 'audio', 'pr-curves', 'projector', 'lora'];
             if (validTabs.indexOf(params.tab) !== -1) {
                 // Defer tab switch until after runs/tags are loaded
                 state._pendingTab = params.tab;

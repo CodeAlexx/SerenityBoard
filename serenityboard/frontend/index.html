@@ -93,6 +93,7 @@
                 <button class="tab-btn" data-tab="pr-curves">PR Curves</button>
                 <button class="tab-btn" data-tab="audio">Audio</button>
                 <button class="tab-btn" data-tab="projector">Projector</button>
+                <button class="tab-btn" data-tab="lora">LoRA</button>
             </div>
 
             <!-- Scalars panel (existing chart grid) -->
@@ -184,6 +185,42 @@
                     <div id="projector-status"></div>
                 </div>
             </div>
+            <!-- LoRA Compare panel -->
+            <div id="panel-lora" class="tab-panel" style="display: none;">
+                <div id="lora-container">
+                    <div class="lora-toolbar">
+                        <div class="lora-file-inputs">
+                            <div class="lora-file-group">
+                                <label>LoRA 1:</label>
+                                <input type="text" id="lora-path-1" placeholder="Path to .safetensors file" class="lora-path-input">
+                                <input type="file" id="lora-file-1" accept=".safetensors" style="display:none">
+                                <button class="toolbar-btn" onclick="document.getElementById('lora-file-1').click()">Browse</button>
+                            </div>
+                            <div class="lora-file-group">
+                                <label>LoRA 2 (optional):</label>
+                                <input type="text" id="lora-path-2" placeholder="Path to .safetensors file (compare)" class="lora-path-input">
+                                <input type="file" id="lora-file-2" accept=".safetensors" style="display:none">
+                                <button class="toolbar-btn" onclick="document.getElementById('lora-file-2').click()">Browse</button>
+                            </div>
+                        </div>
+                        <div class="lora-actions">
+                            <button id="lora-analyze-btn" class="toolbar-btn toolbar-btn-primary">Analyze</button>
+                            <button id="lora-export-csv-btn" class="toolbar-btn" style="display:none">Export CSV</button>
+                        </div>
+                    </div>
+                    <div id="lora-summary" style="display:none;"></div>
+                    <div id="lora-diagnostics" style="display:none;"></div>
+                    <div id="lora-table-container">
+                        <div class="empty-state">
+                            <p>Select a LoRA file to analyze, or two files to compare</p>
+                        </div>
+                    </div>
+                    <div id="lora-charts" style="display:none;">
+                        <div id="lora-chart-a-spectral" style="width:100%;height:300px;"></div>
+                        <div id="lora-chart-b-spectral" style="width:100%;height:300px;"></div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -209,6 +246,7 @@
             addScript('/live.js');
             addScript('/app.js');
             addScript('/projector.js');
+            addScript('/lora.js');
         })();
     </script>
 </body>

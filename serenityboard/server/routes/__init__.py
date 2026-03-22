@@ -27,6 +27,7 @@ __all__ = [
     "meshes_router",
     "embeddings_router",
     "notes_router",
+    "lora_router",
 ]
 
 _watcher: RunWatcher | None = None
@@ -62,3 +63,4 @@ from serenityboard.server.routes.graphs import router as graphs_router  # noqa: 
 from serenityboard.server.routes.meshes import router as meshes_router  # noqa: E402
 from serenityboard.server.routes.embeddings import router as embeddings_router  # noqa: E402
 from serenityboard.server.routes.notes import router as notes_router  # noqa: E402
+from serenityboard.server.routes.lora import router as lora_router  # noqa: E402
