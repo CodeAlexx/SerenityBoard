@@ -255,11 +255,27 @@ class TestConstructorArgs:
 # V2 stubs
 # ---------------------------------------------------------------------------
 
-class TestV2Stubs:
-    """Unimplemented methods raise NotImplementedError."""
+class TestAddVideo:
+    """add_video forwards vid_tensor and global_step."""
 
-    def test_add_video_not_implemented(self, writer_logdir: str) -> None:
+    def test_video_via_compat(self, writer_logdir: str) -> None:
+        rng = np.random.default_rng(42)
+        vid = rng.random((4, 3, 32, 32), dtype=np.float32)
+
         w = SummaryWriter(log_dir=writer_logdir, run_name="compat_run")
-        with pytest.raises(NotImplementedError, match="add_video"):
-            w.add_video("tag", None)
+        w.add_video("test_vid", vid, global_step=3, fps=8)
+        w.flush()
+
+        conn = _connect(writer_logdir)
+        row = conn.execute(
+            "SELECT tag, step, kind, width, height FROM artifacts WHERE tag = 'test_vid'"
+        ).fetchone()
+        conn.close()
+
+        assert row is not None
+        assert row[0] == "test_vid"
+        assert row[1] == 3
+        assert row[2] == "video"
+        assert row[3] == 32  # width
+        assert row[4] == 32  # height
         w.close()

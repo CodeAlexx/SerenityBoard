@@ -144,6 +144,76 @@ class TestSummaryWriter:
         import json
         assert json.loads(row[0]) == "complete"
 
+    def test_add_video(self, writer_logdir: str) -> None:
+        """Add a 4-frame video, flush, verify artifacts table + blob file."""
+        w = SummaryWriter(writer_logdir, run_name="video_run")
+        rng = np.random.default_rng(42)
+        vid = rng.random((4, 3, 64, 64), dtype=np.float32)  # T, C, H, W
+        w.add_video("test_vid", vid, step=1, fps=4)
+        w.flush()
+
+        db_path = os.path.join(writer_logdir, "video_run", "board.db")
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT tag, step, blob_key, width, height, kind, mime_type FROM artifacts"
+        ).fetchall()
+        conn.close()
+
+        assert len(rows) == 1
+        tag, step, blob_key, width, height, kind, mime_type = rows[0]
+        assert tag == "test_vid"
+        assert step == 1
+        assert width == 64
+        assert height == 64
+        assert kind == "video"
+        assert mime_type in ("video/mp4", "image/gif")
+
+        # Verify blob file exists and has reasonable size
+        blob_path = os.path.join(writer_logdir, "video_run", "blobs", blob_key)
+        assert os.path.exists(blob_path)
+        assert os.path.getsize(blob_path) > 100  # not empty
+        w.close()
+
+    def test_add_video_batched(self, writer_logdir: str) -> None:
+        """Batched input (B, T, C, H, W) takes first video only."""
+        w = SummaryWriter(writer_logdir, run_name="video_batch_run")
+        rng = np.random.default_rng(42)
+        vid = rng.random((3, 4, 3, 32, 32), dtype=np.float32)  # B=3
+        w.add_video("batch_vid", vid, step=0)
+        w.flush()
+
+        db_path = os.path.join(writer_logdir, "video_batch_run", "board.db")
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT tag, kind FROM artifacts"
+        ).fetchall()
+        conn.close()
+
+        assert len(rows) == 1  # only first video logged
+        assert rows[0][0] == "batch_vid"
+        assert rows[0][1] == "video"
+        w.close()
+
+    def test_add_video_uint8(self, writer_logdir: str) -> None:
+        """uint8 input passes through without conversion."""
+        w = SummaryWriter(writer_logdir, run_name="video_u8_run")
+        rng = np.random.default_rng(42)
+        vid = rng.integers(0, 256, size=(4, 3, 32, 32), dtype=np.uint8)
+        w.add_video("u8_vid", vid, step=0)
+        w.flush()
+
+        db_path = os.path.join(writer_logdir, "video_u8_run", "board.db")
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT kind, mime_type FROM artifacts WHERE tag = 'u8_vid'"
+        ).fetchone()
+        conn.close()
+
+        assert row is not None
+        assert row[0] == "video"
+        assert row[1] in ("video/mp4", "image/gif")
+        w.close()
+
     def test_noop_rank(self, writer_logdir: str) -> None:
         """Writer with rank=1 should be a no-op -- no db created or data written."""
         w = SummaryWriter(writer_logdir, run_name="noop_run", rank=1)

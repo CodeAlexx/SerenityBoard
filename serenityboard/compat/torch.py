@@ -38,17 +38,6 @@ _TB_BINS_MAP = {
     "sqrt": 64,
 }
 
-_V2_METHODS = (
-    "add_video",
-)
-
-
-def _not_implemented(method_name: str) -> None:
-    raise NotImplementedError(
-        f"SummaryWriter.{method_name}() is not yet supported by SerenityBoard."
-    )
-
-
 class SummaryWriter:
     """Drop-in replacement for ``torch.utils.tensorboard.SummaryWriter``.
 
@@ -302,8 +291,17 @@ class SummaryWriter:
 
     # ── V2 stubs ──────────────────────────────────────────────────────
 
-    def add_video(self, *args: Any, **kwargs: Any) -> None:
-        _not_implemented("add_video")
+    def add_video(
+        self,
+        tag: str,
+        vid_tensor: Any,
+        global_step: int | None = None,
+        fps: int | float = 4,
+        walltime: float | None = None,
+    ) -> None:
+        """Log a video clip. Maps ``vid_tensor`` and ``global_step``."""
+        step = global_step if global_step is not None else 0
+        self._writer.add_video(tag, vid_tensor=vid_tensor, step=step, fps=int(fps))
 
     def add_audio(
         self,

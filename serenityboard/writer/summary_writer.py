@@ -47,6 +47,38 @@ _SPRITE_WARN_THRESHOLD = 5_000
 _MAX_SPRITE_SHEET_DIM = 4096
 
 
+def _encode_video(frames: list[np.ndarray], fps: int) -> tuple[bytes, str]:
+    """Encode HWC uint8 frames to video bytes.
+
+    Returns (data, mime_type). Tries imageio (MP4) first, falls back to
+    animated GIF via PIL.
+    """
+    try:
+        import imageio.v3 as iio
+
+        buf = io.BytesIO()
+        # Stack frames into (T, H, W, C) array for imageio
+        stacked = np.stack(frames)
+        iio.imwrite(buf, stacked, extension=".mp4", fps=fps)
+        return buf.getvalue(), "video/mp4"
+    except (ImportError, Exception):
+        pass
+
+    # Fallback: animated GIF
+    pil_frames = [Image.fromarray(f) for f in frames]
+    buf = io.BytesIO()
+    pil_frames[0].save(
+        buf,
+        format="GIF",
+        save_all=True,
+        append_images=pil_frames[1:],
+        duration=int(1000 / fps),
+        loop=0,
+    )
+    logger.debug("add_video: encoded as GIF (imageio/ffmpeg not available)")
+    return buf.getvalue(), "image/gif"
+
+
 class SummaryWriter:
     """Write training metrics, images, and text to a SerenityBoard run directory.
 
@@ -1050,6 +1082,75 @@ class SummaryWriter:
             step=step,
         )
         self._enqueue("meshes", tag, item)
+
+    def add_video(
+        self,
+        tag: str,
+        vid_tensor: object,
+        step: int,
+        fps: int = 4,
+        walltime: float | None = None,
+    ) -> None:
+        """Log a video clip.
+
+        Parameters
+        ----------
+        tag:
+            Data identifier.
+        vid_tensor:
+            Video data as (T, C, H, W) or (B, T, C, H, W) numpy array or
+            torch tensor.  For batched input, only the first video is logged.
+            Float [0,1] or uint8 [0,255].
+        step:
+            Global step value.
+        fps:
+            Frames per second for playback (default 4).
+        """
+        if self._noop:
+            return
+        self._check_error()
+
+        # Convert torch tensor to numpy
+        try:
+            import torch
+            if isinstance(vid_tensor, torch.Tensor):
+                vid_tensor = vid_tensor.detach().cpu().numpy()
+        except ImportError:
+            pass
+
+        arr = np.asarray(vid_tensor)
+
+        # Handle batched input: (B, T, C, H, W) -> take first
+        if arr.ndim == 5:
+            arr = arr[0]
+        if arr.ndim != 4:
+            raise ValueError(
+                f"vid_tensor must be 4D (T, C, H, W) or 5D (B, T, C, H, W), "
+                f"got shape {arr.shape}"
+            )
+
+        # Float [0,1] -> uint8
+        if arr.dtype in (np.float32, np.float64, np.float16):
+            arr = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+
+        # (T, C, H, W) -> (T, H, W, C)
+        arr = np.transpose(arr, (0, 2, 3, 1))
+
+        # Convert to list of HWC frames
+        frames = [arr[i] for i in range(arr.shape[0])]
+
+        video_bytes, mime_type = _encode_video(frames, fps)
+        ext = "mp4" if mime_type == "video/mp4" else "gif"
+        blob_key = self._blob_storage.store(video_bytes, ext)
+
+        _, h, w, _ = arr.shape
+        wt = walltime if walltime is not None else time.time()
+        item = WriteItem(
+            table="artifacts",
+            params=(tag, step, 0, wt, "video", mime_type, blob_key, w, h, "{}"),
+            step=step,
+        )
+        self._enqueue("artifacts", tag, item)
 
     # ── lifecycle ─────────────────────────────────────────────────────
 
