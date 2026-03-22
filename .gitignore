@@ -7,7 +7,6 @@ build/
 .pytest_cache/
 *.db
 test_logdir/
-tests/
 DEFERRED_FIXES.md
 .claude/
 .planning/
