@@ -45,6 +45,7 @@ add_library(sbserver STATIC
   src/server/run_manager.cpp
   src/server/live_updates.cpp
   src/server/routes.cpp
+  src/server/lora_analytics.cpp
   src/server/app.cpp)
 target_include_directories(sbserver PUBLIC include)
 target_include_directories(sbserver SYSTEM PUBLIC third_party)

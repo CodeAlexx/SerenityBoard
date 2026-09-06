@@ -3,8 +3,12 @@
 #include <filesystem>
 #include <regex>
 #include <sstream>
+#include <atomic>
+#include <fstream>
+#include <unistd.h>
 
 #include "serenityboard/app.hpp"
+#include "serenityboard/lora_analytics.hpp"
 
 namespace sb {
 
@@ -167,6 +171,128 @@ const std::regex kBlobKey("^[a-f0-9]{16}\\.[a-z0-9]+$");
 
 }  // namespace
 
+// ── /api/lora/* (serenityboard/server/routes/lora.py) ──
+struct MultipartFile {
+  std::string filename, content;
+};
+
+std::map<std::string, MultipartFile> parse_multipart(const Request &req) {
+  std::map<std::string, MultipartFile> out;
+  auto ct = req.headers.find("content-type");
+  if (ct == req.headers.end()) return out;
+  const auto bpos = ct->second.find("boundary=");
+  if (bpos == std::string::npos) return out;
+  std::string boundary = ct->second.substr(bpos + 9);
+  if (!boundary.empty() && boundary.front() == '"') boundary = boundary.substr(1, boundary.size() - 2);
+  const std::string delim = "--" + boundary;
+  const std::string &body = req.body;
+  std::size_t pos = body.find(delim);
+  while (pos != std::string::npos) {
+    pos += delim.size();
+    if (body.compare(pos, 2, "--") == 0) break;
+    if (body.compare(pos, 2, "\r\n") == 0) pos += 2;
+    const auto hdr_end = body.find("\r\n\r\n", pos);
+    if (hdr_end == std::string::npos) break;
+    const std::string headers = body.substr(pos, hdr_end - pos);
+    const std::size_t data_start = hdr_end + 4;
+    std::size_t next = body.find("\r\n" + delim, data_start);
+    if (next == std::string::npos) break;
+    MultipartFile part;
+    part.content = body.substr(data_start, next - data_start);
+    std::string name;
+    auto field = [&](const std::string &key) -> std::string {
+      const auto k = headers.find(key + "=\"");
+      if (k == std::string::npos) return "";
+      const auto start = k + key.size() + 2, end = headers.find('"', start);
+      return headers.substr(start, end - start);
+    };
+    name = field("name");
+    part.filename = field("filename");
+    out[name] = std::move(part);
+    pos = next + 2;
+  }
+  return out;
+}
+
+bool ends_with(const std::string &s, const std::string &suffix) {
+  return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+struct TempFile {
+  std::string path;
+  explicit TempFile(const std::string &content) {
+    static std::atomic<unsigned> counter{0};
+    path = (std::filesystem::temp_directory_path() /
+            ("sb_lora_" + std::to_string(::getpid()) + "_" + std::to_string(counter++) + ".safetensors")).string();
+    std::ofstream(path, std::ios::binary) << content;
+  }
+  ~TempFile() { std::error_code ec; std::filesystem::remove(path, ec); }
+};
+
+Response lora_json(const Json &body) { return Response::json(200, sb::lora::dump_json_py(body)); }
+
+Response lora_route(const std::string &path, const Request &req) {
+  using namespace sb::lora;
+  try {
+    if (path == "/api/lora/analyze" || path == "/api/lora/compare") {
+      Json body = Json::parse(req.body, nullptr, false);
+      if (!body.is_object()) return error_response(422, "Invalid JSON body");
+      std::vector<std::string> paths;
+      if (path == "/api/lora/analyze") {
+        if (!body.contains("path") || !body["path"].is_string()) return error_response(422, "path is required");
+        paths.push_back(body["path"].get<std::string>());
+      } else {
+        for (const char *k : {"path_a", "path_b"}) {
+          if (!body.contains(k) || !body[k].is_string()) return error_response(422, std::string(k) + " is required");
+          paths.push_back(body[k].get<std::string>());
+        }
+      }
+      for (const auto &p : paths) {
+        if (!std::filesystem::is_regular_file(p)) return error_response(404, "File not found: " + p);
+        if (!ends_with(p, ".safetensors")) return error_response(400, "Only .safetensors files are supported");
+      }
+      if (paths.size() == 1) {
+        const auto metrics = analyze_file(paths[0]);
+        return lora_json({{"layers", metrics}, {"summary", summary_stats(metrics)}, {"diagnostics", diagnose(metrics)},
+                          {"num_layers", metrics.size()}});
+      }
+      const auto m1 = analyze_file(paths[0]), m2 = analyze_file(paths[1]);
+      const Json comparison = compare(m1, m2);
+      auto diags = diagnose(m1);
+      for (auto &d : diagnose(m2)) diags.push_back(d);
+      return lora_json({{"layers", comparison}, {"summary_a", summary_stats(m1)}, {"summary_b", summary_stats(m2)},
+                        {"diagnostics", diags}, {"num_layers", comparison.size()}});
+    }
+    if (path == "/api/lora/analyze-upload" || path == "/api/lora/compare-upload") {
+      auto parts = parse_multipart(req);
+      const bool single = path == "/api/lora/analyze-upload";
+      std::vector<std::string> names = single ? std::vector<std::string>{"file"} : std::vector<std::string>{"file_a", "file_b"};
+      for (const auto &n : names) {
+        if (!parts.count(n)) return error_response(422, "Missing upload field: " + n);
+        if (parts[n].filename.empty() || !ends_with(parts[n].filename, ".safetensors"))
+          return error_response(400, "Only .safetensors files are supported");
+      }
+      if (single) {
+        TempFile tmp(parts["file"].content);
+        const auto metrics = analyze_file(tmp.path);
+        return lora_json({{"layers", metrics}, {"summary", summary_stats(metrics)}, {"diagnostics", diagnose(metrics)},
+                          {"num_layers", metrics.size()}, {"filename", parts["file"].filename}});
+      }
+      TempFile ta(parts["file_a"].content), tb(parts["file_b"].content);
+      const auto m1 = analyze_file(ta.path), m2 = analyze_file(tb.path);
+      const Json comparison = compare(m1, m2);
+      auto diags = diagnose(m1);
+      for (auto &d : diagnose(m2)) diags.push_back(d);
+      return lora_json({{"layers", comparison}, {"summary_a", summary_stats(m1)}, {"summary_b", summary_stats(m2)},
+                        {"diagnostics", diags}, {"num_layers", comparison.size()},
+                        {"filename_a", parts["file_a"].filename}, {"filename_b", parts["file_b"].filename}});
+    }
+    return error_response(404, "Not Found");
+  } catch (const std::exception &e) {
+    return error_response(500, std::string("LoRA analysis failed: ") + e.what());
+  }
+}
+
 Response App::handle(const Request &req) {
   Response resp = [&]() -> Response {
     std::map<std::string, std::string> pp;
@@ -228,8 +354,7 @@ Response App::handle(const Request &req) {
         }
       return ok_json(result);
     }
-    if (path.rfind("/api/lora/", 0) == 0 && m == "POST")
-      return error_response(503, "LoRA analytics not available (torch or safetensors missing)");
+    if (path.rfind("/api/lora/", 0) == 0 && m == "POST") return lora_route(path, req);
 
     // ── run-scoped ──
     if (match_route("/api/runs/{run}", path, pp) && m == "DELETE") {

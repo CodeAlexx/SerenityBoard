@@ -18,7 +18,8 @@ native/
                            JSON lines, losses.diftensor)
   tools/                   serenityboardd (serve), sbingest
   tests/                   sb_core_tests (C++), tests/py/cross_read.py (Python reads C++ db)
-  scripts/                 route_parity.py (oracle diff), ui_drive.mjs + ui_check*.js (headless UI)
+  scripts/                 route_parity.py (oracle diff), lora_parity.py (LoRA metrics vs torch),
+                           ui_drive.mjs + ui_check*.js (headless UI)
   third_party/             sqlite 3.46 amalgamation (public domain), nlohmann/json 3.11.3 (MIT)
 ```
 
@@ -75,10 +76,14 @@ sbingest --logdir /runs --run train-1 losses:losses.diftensor       # diftrain F
   no-cache headers, CSV/JSON export, distributions basis points, audio waveform/spectrogram/
   peak/rms (NumPy float32 pairwise mean reproduced), meshes/embeddings single-object form,
   notes upsert, `/ws/live` subscribe/scalar/trace/eval/session_changed with fnmatch globs.
+- LoRA inspector (`/api/lora/analyze|compare|analyze-upload|compare-upload`): own safetensors
+  reader (F32/F16/BF16/F64), exact singular values of A, B and BA through rank-sized Gram
+  cores (Householder + implicit QL, double precision), the same metrics / summary /
+  diagnostic strings / `diff_*_pct` as `serenityboard/lora_analytics.py`, multipart uploads,
+  layers analysed across hardware threads. Gate: `scripts/lora_parity.py` (torch oracle).
 
 ## Not ported (returns the Python fallback behaviour)
 
-- `/api/lora/*` → 503 "LoRA analytics not available" (needs safetensors + SVD; planned).
 - Ops routers (`/api/tables|registry|sweeps|automations`) → 404 (opt-in in Python too).
 - Writer: `add_video` (mp4/gif encoding), `add_graph(nn.Module)` tracing (use
   `add_graph_json`), embedding sprite sheets, TensorBoard-compat class (C++ callers use
