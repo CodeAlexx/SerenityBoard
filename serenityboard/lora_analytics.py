@@ -85,18 +85,15 @@ def analyze_lora_layer(
     a_spectral = a_sv[0].item()
     b_spectral = b_sv[0].item()
 
-    # BA product — use Gram trick for large matrices
+    # BA product. Its rank is at most the LoRA rank r, so its singular values
+    # are exactly those of the r x r core R_B @ R_A^T where B = Q_B R_B and
+    # A^T = Q_A R_A (thin QR). This is exact, O((m + n) r^2), and avoids the
+    # Gram/full-SVD paths that returned min(m, n) values of which all but r
+    # were float32 noise (inflating effective_rank and condition_number).
     ba = b @ a
-    rank = min(a.shape[0], a.shape[1])
-    if max(ba.shape) > 4096 and rank <= 128:
-        if ba.shape[0] > ba.shape[1]:
-            gram = ba.T @ ba
-        else:
-            gram = ba @ ba.T
-        eigvals = torch.linalg.eigvalsh(gram)
-        ba_sv = eigvals.clamp(min=0).sqrt().flip(0)
-    else:
-        ba_sv = torch.linalg.svdvals(ba)
+    r_b = torch.linalg.qr(b, mode="r").R          # (r, r)
+    r_a = torch.linalg.qr(a.T, mode="r").R        # (r, r)
+    ba_sv = torch.linalg.svdvals(r_b @ r_a.T)
 
     ba_spectral = ba_sv[0].item()
     nuclear = ba_sv.sum().item()
